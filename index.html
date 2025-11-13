@@ -46,11 +46,10 @@
     <!-- Left: Documents / Portfolio Pulse -->
     <aside class="left">
       <div class="panel-head">
-        <span class="panel-title">Research Library</span>
         <!-- View Toggle -->
         <div class="view-toggle">
-          <button class="view-toggle-btn active" id="viewLibrary">Library</button>
-          <button class="view-toggle-btn" id="viewPulse">Portfolio Pulse</button>
+          <button class="view-toggle-btn active" id="viewLibrary">Research Library</button>
+          <button class="view-toggle-btn" id="viewPulse">Pulse</button>
         </div>
       </div>
       <div class="left-body">
@@ -116,17 +115,10 @@
     <!-- Right: Generation -->
     <main class="right">
       <div class="panel-head">
-        <div class="panel-title-dropdown">
-          <button class="create-dropdown-btn" id="createDropdownBtn">
-            <span id="createDropdownLabel">Create Research</span>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-              <path d="M6 8L2 4h8z"/>
-            </svg>
-          </button>
-          <div class="create-dropdown-menu" id="createDropdownMenu">
-            <button class="dropdown-item" data-mode="research">Research</button>
-            <button class="dropdown-item" data-mode="whitelabel">White Label Document</button>
-          </div>
+        <!-- View Toggle -->
+        <div class="view-toggle">
+          <button class="view-toggle-btn active" id="viewResearch">Research</button>
+          <button class="view-toggle-btn" id="viewWhiteLabel">White Label</button>
         </div>
         <span id="activeJobsBadge" class="active-badge" style="display: none;">Active (0)</span>
       </div>
@@ -437,6 +429,6 @@
     Screen History
   </button>
     <!-- Bottom right build -->
-<div class="version-badge">Scout Build v3.1.0 - Last Updated: 11.12.2025</div>
+<div class="version-badge">Scout Build v3.0.0 - Last Updated: 11.12.2025</div>
 </body>
 </html>
