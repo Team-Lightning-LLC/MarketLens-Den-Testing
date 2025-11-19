@@ -102,23 +102,26 @@ class PortfolioPulseWidget {
       // Step 1: Delete existing watchlist(s) - ONLY watchlists, nothing else
       await this.deleteExistingWatchlists();
 
-      // Step 2: Upload new watchlist with standardized name
+      // Step 2: Delete today's digest to allow fresh generation
+      await this.deleteTodaysDigest();
+
+      // Step 3: Upload new watchlist with standardized name
       const today = new Date();
       const dateStr = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}-${today.getFullYear()}`;
       const watchlistName = `My Watchlist: ${dateStr}`;
 
       const uploadedDoc = await this.uploadWatchlistFile(file, watchlistName);
 
-      // Step 3: Show success state
+      // Step 4: Show success state
       this.showWatchlistDisplay(uploadedDoc);
 
-      // Step 4: Wait for vectorization then generate digest
+      // Step 5: Wait for vectorization then generate digest
       this.updateStatus('Processing...', true);
       console.log('[Pulse] Waiting 30 seconds for vectorization...');
       
       await new Promise(resolve => setTimeout(resolve, 30000));
 
-      // Step 5: Auto-generate digest
+      // Step 6: Auto-generate digest
       await this.generateDigest();
 
     } catch (error) {
@@ -281,7 +284,74 @@ async uploadWatchlistFile(file, name) {
     throw error;
   }
 }
+// Delete today's digest to allow fresh generation
+  async deleteTodaysDigest() {
+    try {
+      const response = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects?limit=1000`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${PULSE_CONFIG.VERTESIA_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
 
+      if (!response.ok) {
+        throw new Error(`Failed to fetch objects: ${response.statusText}`);
+      }
+
+      const objects = await response.json();
+      const objectsArray = Array.isArray(objects) ? objects : objects.objects || [];
+      
+      const today = new Date();
+      const todayStr = today.toLocaleDateString('en-US');
+      
+      // Find digest documents from today
+      const todaysDigests = objectsArray.filter(obj => {
+        if (!obj.name) return false;
+        
+        // Check if it's a digest
+        const isDigest = obj.name.toLowerCase().startsWith('digest:');
+        if (!isDigest) return false;
+        
+        // Check if it's from today
+        const objDate = new Date(obj.created_at || obj.updated_at);
+        const objDateStr = objDate.toLocaleDateString('en-US');
+        
+        if (objDateStr !== todayStr) return false;
+        
+        console.log(`[Pulse] Found today's digest to delete: "${obj.name}" (ID: ${obj.id})`);
+        return true;
+      });
+
+      if (todaysDigests.length === 0) {
+        console.log('[Pulse] No digest from today to delete');
+        return;
+      }
+
+      // Delete each digest from today
+      for (const digest of todaysDigests) {
+        console.log(`[Pulse] Deleting today's digest: ${digest.name}`);
+        
+        const deleteResponse = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects/${digest.id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${PULSE_CONFIG.VERTESIA_API_KEY}`
+          }
+        });
+
+        if (!deleteResponse.ok) {
+          console.error(`[Pulse] Failed to delete digest ${digest.id}:`, deleteResponse.statusText);
+        } else {
+          console.log(`[Pulse] Successfully deleted: ${digest.name}`);
+        }
+      }
+
+      console.log(`[Pulse] Deleted ${todaysDigests.length} digest(s) from today`);
+    } catch (error) {
+      console.error('[Pulse] Error deleting today\'s digest:', error);
+      // Don't throw - we can still try to generate even if delete fails
+    }
+  }
   // Show the watchlist display UI
   showWatchlistDisplay(watchlistDoc) {
     const uploadBtn = document.getElementById('pulseUploadBtn');
