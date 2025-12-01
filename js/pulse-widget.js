@@ -1,9 +1,11 @@
-// Portfolio Pulse Widget - Integrated Version 2
-// Manages digest generation, loading, parsing, and display
+// Portfolio Pulse Widget - Integrated Version 3
+// Manages digest generation, loading, parsing, display, and history navigation
 
 class PortfolioPulseWidget {
   constructor() {
     this.digest = null;
+    this.allDigests = [];        // Store all digests for history navigation
+    this.currentDigestIndex = 0; // Track current position in history
     this.isGenerating = false;
     this.pulseAPI = null;
     this.init();
@@ -16,8 +18,8 @@ class PortfolioPulseWidget {
     // Bind UI events
     this.bindUI();
     
-    // Load latest digest on startup and check if we need to generate
-    await this.loadLatestDigest();
+    // Load all digests on startup
+    await this.loadAllDigests();
     
     // Check if digest is from today, if not generate one
     await this.checkAndGenerateIfNeeded();
@@ -46,6 +48,17 @@ class PortfolioPulseWidget {
       refreshBtn.addEventListener('click', () => this.generateDigest());
     }
 
+    // History navigation buttons
+    const prevBtn = document.getElementById('pulseNavPrev');
+    const nextBtn = document.getElementById('pulseNavNext');
+
+    if (prevBtn) {
+      prevBtn.addEventListener('click', () => this.navigateDigest(1)); // +1 = older (higher index)
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => this.navigateDigest(-1)); // -1 = newer (lower index)
+    }
+
     // Expand/collapse article cards
     document.addEventListener('click', (e) => {
       const header = e.target.closest('.pulse-article-header');
@@ -59,6 +72,41 @@ class PortfolioPulseWidget {
 
     // Check for existing watchlist on load
     this.checkExistingWatchlist();
+  }
+
+  // Show/hide loading overlay
+  showLoadingOverlay(show) {
+    const overlay = document.getElementById('pulseLoadingOverlay');
+    if (overlay) {
+      overlay.style.display = show ? 'flex' : 'none';
+    }
+  }
+
+  // Navigate between digests (-1 = newer, +1 = older)
+  navigateDigest(direction) {
+    const newIndex = this.currentDigestIndex + direction;
+    
+    if (newIndex < 0 || newIndex >= this.allDigests.length) return;
+    
+    this.currentDigestIndex = newIndex;
+    this.digest = this.allDigests[newIndex];
+    this.renderDigest();
+    this.updateNavButtons();
+  }
+
+  // Update navigation button states
+  updateNavButtons() {
+    const prevBtn = document.getElementById('pulseNavPrev');
+    const nextBtn = document.getElementById('pulseNavNext');
+    
+    if (prevBtn) {
+      // Can go to older (higher index = older)
+      prevBtn.disabled = this.currentDigestIndex >= this.allDigests.length - 1;
+    }
+    if (nextBtn) {
+      // Can go to newer (lower index = newer)
+      nextBtn.disabled = this.currentDigestIndex <= 0;
+    }
   }
 
   // Check if user already has a watchlist uploaded
@@ -76,7 +124,10 @@ class PortfolioPulseWidget {
 
       const objects = await response.json();
       const objectsArray = Array.isArray(objects) ? objects : objects.objects || [];
-      const watchlist = objectsArray.find(obj => obj.name && obj.name.startsWith('My Watchlist:'));
+      const watchlist = objectsArray.find(obj => 
+        (obj.name && obj.name.startsWith('My Watchlist:')) || 
+        (obj.properties && obj.properties.type === 'watchlist')
+      );
 
       if (watchlist) {
         this.showWatchlistDisplay(watchlist);
@@ -145,10 +196,9 @@ class PortfolioPulseWidget {
     }
   }
 
-  // Delete any existing watchlist documents - SAFETY: Only deletes "My Watchlist:" documents
+  // Delete any existing watchlist documents - SAFETY: Only deletes watchlist documents
   async deleteExistingWatchlists() {
     try {
-      // Get all objects
       const response = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects?limit=1000`, {
         method: 'GET',
         headers: {
@@ -165,18 +215,15 @@ class PortfolioPulseWidget {
       const objectsArray = Array.isArray(objects) ? objects : objects.objects || [];
       
       // SAFETY CHECK: Find ONLY watchlist documents
-      // Must start with "My Watchlist:" - this protects all other documents
       const watchlists = objectsArray.filter(obj => {
         if (!obj.name) return false;
         
-        // Primary check: name must start with "My Watchlist:"
-        const isWatchlistName = obj.name.startsWith('My Watchlist:');
+        const isWatchlistName = obj.name && obj.name.startsWith('My Watchlist:');
+        const isWatchlistType = obj.properties && obj.properties.type === 'watchlist';
         
-        if (!isWatchlistName) return false;
+        if (!isWatchlistName && !isWatchlistType) return false;
         
-        // Log what we're about to delete for safety
         console.log(`[Pulse] Found watchlist to delete: "${obj.name}" (ID: ${obj.id})`);
-        
         return true;
       });
 
@@ -185,7 +232,6 @@ class PortfolioPulseWidget {
         return;
       }
 
-      // Delete each watchlist
       for (const watchlist of watchlists) {
         console.log(`[Pulse] Deleting watchlist: ${watchlist.name}`);
         
@@ -209,82 +255,84 @@ class PortfolioPulseWidget {
       throw error;
     }
   }
-// Upload the watchlist file to Vertesia
-async uploadWatchlistFile(file, name) {
-  try {
-    // Step 1: Get upload URL
-    const uploadUrlResponse = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects/upload-url`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${PULSE_CONFIG.VERTESIA_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: name,
-        mime_type: file.type || 'application/octet-stream'
-      })
-    });
 
-    if (!uploadUrlResponse.ok) {
-      throw new Error(`Failed to get upload URL: ${uploadUrlResponse.statusText}`);
-    }
-
-    const uploadData = await uploadUrlResponse.json();
-    console.log('[Pulse] Upload URL response:', uploadData);
-
-    // Step 2: Upload file to the signed URL
-    const uploadResponse = await fetch(uploadData.url, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': file.type || 'application/octet-stream'
-      },
-      body: file
-    });
-
-    if (!uploadResponse.ok) {
-      throw new Error(`Failed to upload file: ${uploadResponse.statusText}`);
-    }
-
-    console.log('[Pulse] File uploaded to cloud storage');
-
-    // Step 3: Create object in Vertesia that references the uploaded file
-    const createResponse = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${PULSE_CONFIG.VERTESIA_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: name,
-        content: {
-          source: uploadData.id,  // This is the gs:// path
-          type: file.type || 'application/octet-stream',
-          name: file.name
+  // Upload the watchlist file to Vertesia
+  async uploadWatchlistFile(file, name) {
+    try {
+      // Step 1: Get upload URL
+      const uploadUrlResponse = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects/upload-url`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${PULSE_CONFIG.VERTESIA_API_KEY}`,
+          'Content-Type': 'application/json'
         },
-        properties: {
-          type: 'watchlist',
-          uploaded_at: new Date().toISOString(),
-          original_filename: file.name
-        }
-      })
-    });
+        body: JSON.stringify({
+          name: name,
+          mime_type: file.type || 'application/octet-stream'
+        })
+      });
 
-    if (!createResponse.ok) {
-      const errorText = await createResponse.text();
-      console.error('[Pulse] Create object failed:', errorText);
-      throw new Error(`Failed to create object: ${createResponse.statusText}`);
+      if (!uploadUrlResponse.ok) {
+        throw new Error(`Failed to get upload URL: ${uploadUrlResponse.statusText}`);
+      }
+
+      const uploadData = await uploadUrlResponse.json();
+      console.log('[Pulse] Upload URL response:', uploadData);
+
+      // Step 2: Upload file to the signed URL
+      const uploadResponse = await fetch(uploadData.url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream'
+        },
+        body: file
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Failed to upload file: ${uploadResponse.statusText}`);
+      }
+
+      console.log('[Pulse] File uploaded to cloud storage');
+
+      // Step 3: Create object in Vertesia that references the uploaded file
+      const createResponse = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${PULSE_CONFIG.VERTESIA_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: name,
+          content: {
+            source: uploadData.id,
+            type: file.type || 'application/octet-stream',
+            name: file.name
+          },
+          properties: {
+            type: 'watchlist',
+            uploaded_at: new Date().toISOString(),
+            original_filename: file.name
+          }
+        })
+      });
+
+      if (!createResponse.ok) {
+        const errorText = await createResponse.text();
+        console.error('[Pulse] Create object failed:', errorText);
+        throw new Error(`Failed to create object: ${createResponse.statusText}`);
+      }
+
+      const createdObject = await createResponse.json();
+      console.log('[Pulse] Watchlist object created:', createdObject);
+      
+      return createdObject;
+    } catch (error) {
+      console.error('[Pulse] Error uploading watchlist:', error);
+      throw error;
     }
-
-    const createdObject = await createResponse.json();
-    console.log('[Pulse] Watchlist object created:', createdObject);
-    
-    return createdObject;
-  } catch (error) {
-    console.error('[Pulse] Error uploading watchlist:', error);
-    throw error;
   }
-}
-// Delete today's digest to allow fresh generation
+
+  // Delete today's digest to allow fresh generation
   async deleteTodaysDigest() {
     try {
       const response = await fetch(`${PULSE_CONFIG.VERTESIA_BASE_URL}/objects?limit=1000`, {
@@ -305,15 +353,12 @@ async uploadWatchlistFile(file, name) {
       const today = new Date();
       const todayStr = today.toLocaleDateString('en-US');
       
-      // Find digest documents from today
       const todaysDigests = objectsArray.filter(obj => {
         if (!obj.name) return false;
         
-        // Check if it's a digest
         const isDigest = obj.name.toLowerCase().startsWith('digest:');
         if (!isDigest) return false;
         
-        // Check if it's from today
         const objDate = new Date(obj.created_at || obj.updated_at);
         const objDateStr = objDate.toLocaleDateString('en-US');
         
@@ -328,7 +373,6 @@ async uploadWatchlistFile(file, name) {
         return;
       }
 
-      // Delete each digest from today
       for (const digest of todaysDigests) {
         console.log(`[Pulse] Deleting today's digest: ${digest.name}`);
         
@@ -349,9 +393,9 @@ async uploadWatchlistFile(file, name) {
       console.log(`[Pulse] Deleted ${todaysDigests.length} digest(s) from today`);
     } catch (error) {
       console.error('[Pulse] Error deleting today\'s digest:', error);
-      // Don't throw - we can still try to generate even if delete fails
     }
   }
+
   // Show the watchlist display UI
   showWatchlistDisplay(watchlistDoc) {
     const uploadBtn = document.getElementById('pulseUploadBtn');
@@ -361,7 +405,6 @@ async uploadWatchlistFile(file, name) {
     if (uploadBtn) uploadBtn.style.display = 'none';
     if (watchlistDisplay) watchlistDisplay.style.display = 'flex';
 
-    // Set tooltip with last updated date
     if (watchlistName && watchlistDoc) {
       const updatedDate = new Date(watchlistDoc.created_at || watchlistDoc.properties?.uploaded_at);
       const formattedDate = updatedDate.toLocaleDateString('en-US', {
@@ -384,7 +427,6 @@ async uploadWatchlistFile(file, name) {
     const digestDate = new Date(this.digest.created_at);
     const today = new Date();
     
-    // Check if digest is from today (same date)
     const isSameDay = digestDate.getDate() === today.getDate() &&
                       digestDate.getMonth() === today.getMonth() &&
                       digestDate.getFullYear() === today.getFullYear();
@@ -415,7 +457,7 @@ async uploadWatchlistFile(file, name) {
     setTimeout(async () => {
       console.log('[Pulse] Running scheduled digest generation');
       await this.generateDigest();
-      this.scheduleDigestAt(timeStr); // Re-schedule for next day
+      this.scheduleDigestAt(timeStr);
     }, delay);
   }
 
@@ -428,8 +470,8 @@ async uploadWatchlistFile(file, name) {
     
     this.isGenerating = true;
     this.updateStatus('Generating...', false);
+    this.showLoadingOverlay(true);
     
-    // Disable buttons during generation
     const refreshBtn = document.getElementById('watchlistRefreshBtn');
     const changeBtn = document.getElementById('watchlistChangeBtn');
     
@@ -437,14 +479,9 @@ async uploadWatchlistFile(file, name) {
     if (changeBtn) changeBtn.disabled = true;
 
     try {
-      // Execute async Pulse interaction
       await this.pulseAPI.executeAsync({ Task: 'begin' });
-      
-      // Wait for async completion (5 minutes)
       await new Promise(resolve => setTimeout(resolve, PULSE_CONFIG.GENERATION_WAIT_MS));
-      
-      // Load the newly generated digest
-      await this.loadLatestDigest();
+      await this.loadAllDigests();
       
     } catch (error) {
       console.error('[Pulse] Generation failed:', error);
@@ -452,18 +489,18 @@ async uploadWatchlistFile(file, name) {
       this.updateStatus('Error', false);
     } finally {
       this.isGenerating = false;
+      this.showLoadingOverlay(false);
       
       if (refreshBtn) refreshBtn.disabled = false;
       if (changeBtn) changeBtn.disabled = false;
     }
   }
 
-  // Load latest digest from Vertesia object store
-  async loadLatestDigest() {
+  // Load all digests from Vertesia object store
+  async loadAllDigests() {
     this.updateStatus('Loading...', false);
 
     try {
-      // Get all objects
       const response = await this.pulseAPI.loadAllObjects(1000);
       const objects = response.objects || [];
       
@@ -471,61 +508,76 @@ async uploadWatchlistFile(file, name) {
         throw new Error('No documents found in object store');
       }
 
-      // Sort by most recent
-      objects.sort((a, b) => {
-        const dateA = new Date(b.updated_at || b.created_at);
-        const dateB = new Date(a.updated_at || a.created_at);
-        return dateA - dateB;
-      });
-
-      // Find digest document
-      const digestObj = objects.find(obj => {
+      // Find all digest documents
+      const digestObjects = objects.filter(obj => {
         const searchText = `${obj.name || ''} ${obj.properties?.title || ''}`.toLowerCase();
         return PULSE_CONFIG.DIGEST_KEYWORDS.some(keyword => searchText.includes(keyword));
       });
 
-      if (!digestObj) {
-        throw new Error('No digest document found');
+      if (digestObjects.length === 0) {
+        throw new Error('No digest documents found');
       }
 
-      // Get full object details
-      const fullObject = await this.pulseAPI.getObject(digestObj.id);
-      const contentSource = fullObject?.content?.source;
-      
-      if (!contentSource) {
-        throw new Error('No content source in digest object');
-      }
+      // Sort by date (newest first)
+      digestObjects.sort((a, b) => {
+        const dateA = new Date(a.created_at || a.updated_at);
+        const dateB = new Date(b.created_at || b.updated_at);
+        return dateB - dateA;
+      });
 
-      // Download content
-      let digestText;
-      if (typeof contentSource === 'string') {
-        if (contentSource.startsWith('gs://') || contentSource.startsWith('s3://')) {
-          digestText = await this.downloadAsText(contentSource);
-        } else {
-          digestText = contentSource;
+      // Load and parse each digest
+      this.allDigests = [];
+      for (const digestObj of digestObjects) {
+        try {
+          const fullObject = await this.pulseAPI.getObject(digestObj.id);
+          const contentSource = fullObject?.content?.source;
+          
+          if (!contentSource) continue;
+
+          let digestText;
+          if (typeof contentSource === 'string') {
+            if (contentSource.startsWith('gs://') || contentSource.startsWith('s3://')) {
+              digestText = await this.downloadAsText(contentSource);
+            } else {
+              digestText = contentSource;
+            }
+          } else if (typeof contentSource === 'object') {
+            const fileRef = contentSource.file || contentSource.store || contentSource.path || contentSource.key;
+            digestText = await this.downloadAsText(fileRef);
+          }
+
+          if (!digestText || digestText.trim().length < 20) continue;
+
+          const parsed = this.parseDigest(digestText);
+          parsed.created_at = fullObject.created_at || fullObject.updated_at || new Date().toISOString();
+          parsed.id = digestObj.id;
+          
+          this.allDigests.push(parsed);
+        } catch (err) {
+          console.error('[Pulse] Failed to load digest:', digestObj.id, err);
         }
-      } else if (typeof contentSource === 'object') {
-        const fileRef = contentSource.file || contentSource.store || contentSource.path || contentSource.key;
-        digestText = await this.downloadAsText(fileRef);
       }
 
-      if (!digestText || digestText.trim().length < 20) {
-        throw new Error('Empty or invalid digest content');
+      if (this.allDigests.length === 0) {
+        throw new Error('No valid digests found');
       }
 
-      // Parse digest structure
-      this.digest = this.parseDigest(digestText);
-      this.digest.created_at = fullObject.created_at || fullObject.updated_at || new Date().toISOString();
+      console.log(`[Pulse] Loaded ${this.allDigests.length} digest(s)`);
+
+      // Set current to newest
+      this.currentDigestIndex = 0;
+      this.digest = this.allDigests[0];
       
-      // Render to UI
       this.renderDigest();
+      this.updateNavButtons();
       this.updateStatus('Active', true);
 
     } catch (error) {
-      console.error('[Pulse] Failed to load digest:', error);
+      console.error('[Pulse] Failed to load digests:', error);
       this.updateStatus('No Digest', false);
-      // Don't show error message - checkAndGenerateIfNeeded will handle generation
       this.digest = null;
+      this.allDigests = [];
+      this.updateNavButtons();
     }
   }
 
@@ -542,16 +594,14 @@ async uploadWatchlistFile(file, name) {
 
   // Parse digest markdown into structured data
   parseDigest(rawText) {
-    // Clean formatting
     let text = rawText
       .replace(/\r/g, '')
-      .replace(/\u00AD/g, '') // soft hyphens
-      .replace(/^#+\s*/gm, '') // markdown headers
+      .replace(/\u00AD/g, '')
+      .replace(/^#+\s*/gm, '')
       .replace(/#+(?=\s|$)/g, '')
       .replace(/###+/g, '')
       .trim();
 
-    // Split into article blocks
     const articleBlocks = text
       .split(/(?=Article\s+\d+)/gi)
       .map(block => block.trim())
@@ -560,17 +610,14 @@ async uploadWatchlistFile(file, name) {
     let articles = [];
 
     for (const block of articleBlocks) {
-      // Extract article title
       const titleMatch = block.match(/Article\s+\d+\s*[-–:]\s*(.+)/i);
       const title = titleMatch ? titleMatch[1].trim() : 'Untitled Article';
 
-      // Extract contents section
       const contentsMatch = block.match(/Contents\s*\d*[\s\S]*?(?=(Citations|Article\s+\d+|$))/i);
       let contents = contentsMatch 
         ? contentsMatch[0].replace(/Contents\s*\d*/i, '').trim()
         : '';
 
-      // Convert bullet points and format text
       const lines = contents
         .split('\n')
         .map(line => line.trim())
@@ -579,20 +626,16 @@ async uploadWatchlistFile(file, name) {
       const formattedLines = [];
       for (const line of lines) {
         if (/^[-•*]\s*\*\*.+?:/.test(line)) {
-          // Bullet with bold header
           formattedLines.push(`<li>${this.formatMarkdown(line.replace(/^[-•*]\s*/, '').trim())}</li>`);
         } else if (/^[-•*]\s+/.test(line)) {
-          // Regular bullet
           formattedLines.push(`<li>${this.formatMarkdown(line.replace(/^[-•*]\s*/, '').trim())}</li>`);
         } else {
-          // Paragraph
           formattedLines.push(`<p>${this.formatMarkdown(line)}</p>`);
         }
       }
 
       contents = `<ul class="pulse-article-content">${formattedLines.join('')}</ul>`;
 
-      // Extract citations
       const citations = [];
       const citationsMatch = block.match(/Citations\s*\d*[\s\S]*?(?=(Article\s+\d+|$))/i);
       
@@ -623,10 +666,8 @@ async uploadWatchlistFile(file, name) {
       articles.push({ title, contents, citations });
     }
 
-    // Filter out untitled articles
     articles = articles.filter(article => article.title !== 'Untitled Article');
 
-    // Extract document title
     const docTitle = text.match(/^#?\s*Scout Pulse Portfolio Digest.*$/m)?.[0]
       ?.replace(/^#\s*/, '').trim() 
       || 'Portfolio Digest';
@@ -646,7 +687,6 @@ async uploadWatchlistFile(file, name) {
 
     const createdDate = new Date(this.digest.created_at);
 
-    // Update date displays
     if (dateDisplay) {
       dateDisplay.textContent = createdDate.toLocaleDateString('en-US', {
         month: 'short',
@@ -659,7 +699,6 @@ async uploadWatchlistFile(file, name) {
       lastUpdate.textContent = `Last Update: ${createdDate.toLocaleString()}`;
     }
 
-    // Render articles
     container.innerHTML = this.digest.articles.map(article => `
       <div class="pulse-article">
         <div class="pulse-article-header">
@@ -689,7 +728,6 @@ async uploadWatchlistFile(file, name) {
     `).join('');
   }
 
-  // Format markdown text (bold, italic)
   formatMarkdown(text) {
     if (!text) return '';
     
@@ -698,7 +736,6 @@ async uploadWatchlistFile(file, name) {
       .replace(/\*(.*?)\*/g, '<em>$1</em>');
   }
 
-  // Update status indicator
   updateStatus(text, active) {
     const statusDot = document.getElementById('pulseStatusDot');
     const statusText = document.getElementById('pulseStatusText');
@@ -712,7 +749,6 @@ async uploadWatchlistFile(file, name) {
     }
   }
 
-  // Show empty state message
   showEmpty(message) {
     const container = document.getElementById('pulseArticlesContainer');
     if (container) {
